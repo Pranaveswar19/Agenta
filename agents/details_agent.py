@@ -135,8 +135,8 @@ Format:
         ]
         
         if not missing_fields:
-            # All required fields are filled
-            return "All required information collected. You can say 'generate itinerary' whenever you're ready!", []
+            # All required fields are filled - strongly encourage itinerary generation
+            return "Great! I have all the information I need to create your personalized itinerary. Just say 'generate itinerary' and I'll create a detailed plan for your trip! ✨", []
         
         # Get the first missing field
         next_field = missing_fields[0]
@@ -160,7 +160,8 @@ Format:
         if missing_fields:
             response_text = self._create_friendly_response(details, next_question)
         else:
-            response_text = "Great! I now have all the essential information for your trip. Just say 'generate itinerary' whenever you're ready, and I'll create a detailed plan for your vacation! ✨"
+            # FIX: Make the generate itinerary prompt more obvious
+            response_text = "Great! I now have all the essential information for your trip. 🎉 Just say 'generate itinerary' whenever you're ready, and I'll create a detailed plan for your vacation! ✨"
         
         # Add JSON data
         response_with_json = f"{response_text}\n\n{{\n    \"trip_details\": {json.dumps(details, indent=8)}\n}}"
