@@ -15,17 +15,29 @@ class DetailsAgent(BaseAgent):
         # Define the required trip details
         self.required_fields = [
             "Destination",
+            "Origin",
             "Duration",
+            "Travel_Dates",
+            "Travelers_Count",
+            "Travelers_Type",  # family, couple, solo, friends
             "Budget",
-            "Dietary Preferences",
-            "Mobility Concerns"
+            "Dietary_Preferences",
+            "Mobility_Concerns"
         ]
         
         # Define optional fields
         self.optional_fields = [
             "Season",
-            "Activity Preferences",
-            "Accommodation Type"
+            "Activity_Preferences",
+            "Accommodation_Type",
+            "Transportation_Preferences",
+            "Purpose_Of_Trip",
+            "Must_See_Attractions",
+            "Weather_Preferences",
+            "Previous_Travel_Experience",
+            "Shopping_Interests",
+            "Special_Occasions",
+            "Language_Assistance_Needs"
         ]
     
     def process(self, conversation_history, current_details=None):
