@@ -1,11 +1,13 @@
 from .base_agent import BaseAgent
 import json
 import re
+import random
 
 class DetailsAgent(BaseAgent):
     """
     Agent responsible for extracting and managing travel details
     from user conversations in a natural, unobtrusive way.
+    Using chain prompts for dynamic question generation.
     """
     
     def __init__(self, openai_client=None):
@@ -19,7 +21,7 @@ class DetailsAgent(BaseAgent):
             "Duration",
             "Travel_Dates",
             "Travelers_Count",
-            "Travelers_Type",  # family, couple, solo, friends
+            "Travelers_Type",
             "Budget",
             "Dietary_Preferences",
             "Mobility_Concerns"
@@ -39,6 +41,13 @@ class DetailsAgent(BaseAgent):
             "Special_Occasions",
             "Language_Assistance_Needs"
         ]
+        
+        # Define tiers for information gathering
+        self.tier1_fields = ["Destination", "Origin", "Duration", "Travel_Dates", "Travelers_Count", "Budget"]
+        self.tier2_fields = ["Travelers_Type", "Dietary_Preferences", "Mobility_Concerns", "Accommodation_Type"]
+        self.tier3_fields = ["Purpose_Of_Trip", "Must_See_Attractions", "Transportation_Preferences", 
+                            "Special_Occasions", "Weather_Preferences"]
+        self.tier4_fields = ["Previous_Travel_Experience", "Shopping_Interests", "Language_Assistance_Needs", "Season"]
     
     def process(self, conversation_history, current_details=None):
         """
@@ -51,8 +60,8 @@ class DetailsAgent(BaseAgent):
         # Extract details from conversation
         updated_details, confidence_scores = self._extract_details(conversation_history, current_details)
         
-        # Determine what to ask next
-        next_question, missing_fields = self._determine_next_question(updated_details)
+        # Determine what to ask next using chain prompts
+        next_question, missing_fields = self._determine_next_question(updated_details, conversation_history)
         
         # Format response with JSON
         response_with_json = self._format_response(updated_details, next_question, missing_fields)
@@ -82,6 +91,13 @@ class DetailsAgent(BaseAgent):
         Only update values when you have high confidence in the information.
         For each detail, provide a confidence score (0-100).
         If information is not mentioned or unclear, do not update the field.
+        
+        Pay special attention to:
+        1. Dates (format as YYYY-MM-DD)
+        2. Number of travelers and their relationships (family, couple, friends, solo)
+        3. Specific preferences about accommodations, transportation, and activities
+        4. Any mentioned special requirements or celebrations
+        5. Both explicit and implicit mentions of budget level
         """
         
         user_prompt = f"""Current trip details:
@@ -99,13 +115,30 @@ Format:
 {{
   "updated_details": {{
     "Destination": "value",
+    "Origin": "value",
     "Duration": "value",
-    ...
+    "Travel_Dates": "value",
+    "Travelers_Count": "value",
+    "Travelers_Type": "value",
+    "Budget": "value",
+    "Dietary_Preferences": "value",
+    "Mobility_Concerns": "value",
+    "Season": "value",
+    "Activity_Preferences": "value",
+    "Accommodation_Type": "value",
+    "Transportation_Preferences": "value",
+    "Purpose_Of_Trip": "value",
+    "Must_See_Attractions": "value",
+    "Weather_Preferences": "value",
+    "Previous_Travel_Experience": "value",
+    "Shopping_Interests": "value",
+    "Special_Occasions": "value",
+    "Language_Assistance_Needs": "value"
   }},
   "confidence_scores": {{
     "Destination": 95,
-    "Duration": 80,
-    ...
+    "Origin": 90,
+    ...other fields
   }}
 }}
 """
@@ -114,7 +147,7 @@ Format:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.2,  # Low temperature for factual extraction
-            max_tokens=800
+            max_tokens=1000
         )
         
         # Extract JSON from the response
@@ -138,33 +171,89 @@ Format:
             self.log_activity("Error", f"Details extraction error: {str(e)}")
             return current_details, {}
     
-    def _determine_next_question(self, current_details):
-        """Determine what information to ask for next"""
-        # Check which required fields are missing
-        missing_fields = [
-            field for field in self.required_fields
-            if not current_details.get(field, "").strip()
-        ]
+    def _determine_next_question(self, current_details, conversation_history):
+        """
+        Determine what information to ask for next using a dynamic chain prompt approach
+        """
+        # Check if all required fields are filled
+        missing_required = [field for field in self.required_fields if not current_details.get(field, "").strip()]
         
-        if not missing_fields:
-            # All required fields are filled - strongly encourage itinerary generation
-            return "Great! I have all the information I need to create your personalized itinerary. Just say 'generate itinerary' and I'll create a detailed plan for your trip! ✨", []
+        # If all required fields are filled, we can encourage itinerary generation
+        if not missing_required:
+            return "Great! I have all the essential information I need to create your personalized itinerary. Just say 'generate itinerary' and I'll create a detailed plan for your trip! ✨", []
         
-        # Get the first missing field
-        next_field = missing_fields[0]
+        # Determine which tier to focus on
+        missing_tier1 = [field for field in self.tier1_fields if not current_details.get(field, "").strip()]
+        missing_tier2 = [field for field in self.tier2_fields if not current_details.get(field, "").strip()]
         
-        # Create a question for the next field
-        questions = {
-            "Destination": "Where would you like to go for your trip?",
-            "Duration": "How long are you planning to stay?",
-            "Budget": "What's your budget for this trip? (e.g., economy, mid-range, luxury)",
-            "Dietary Preferences": "Do you have any dietary preferences or restrictions I should know about?",
-            "Mobility Concerns": "Do you have any mobility concerns or accessibility requirements?"
-        }
+        # Convert conversation history to string format for the LLM
+        conversation_text = "\n".join([
+            f"{message['role'].upper()}: {message['content']}"
+            for message in conversation_history[-5:] # Using last 5 messages for context
+            if message['role'] in ['user', 'assistant']
+        ])
         
-        next_question = questions.get(next_field, f"Could you tell me about your {next_field.lower()}?")
+        # Current date and time
+        current_datetime = "2025-04-24 08:50:28"  # This should be dynamically updated
         
-        return next_question, missing_fields
+        # Prepare the current details as JSON
+        current_details_json = json.dumps(current_details, indent=2)
+        
+        # Prepare the system prompt for chain prompting
+        system_prompt = """You are a travel planning expert who excels at gathering information in a conversational way.
+        Your goal is to formulate the next best question to ask the user to gather essential travel information.
+        The question should flow naturally from the conversation and not feel like a generic form question.
+        Make your questions engaging, personalized, and contextually relevant.
+        
+        For questions about dates, ask for specific dates if possible.
+        For questions about travelers, try to understand the group dynamics.
+        For questions about budget, help users understand the options available.
+        
+        NEVER ask for multiple pieces of information in a single question.
+        NEVER list all the missing information - focus on one question at a time.
+        ALWAYS phrase questions in a friendly, conversational tone.
+        """
+        
+        # Determine which missing field to focus on
+        if missing_tier1:
+            target_field = missing_tier1[0]
+            field_importance = "essential"
+        else:
+            target_field = missing_tier2[0] if missing_tier2 else self.tier3_fields[0]
+            field_importance = "important" if missing_tier2 else "helpful"
+        
+        # Prepare the user prompt for chain prompting
+        user_prompt = f"""Current date and time: {current_datetime}
+        
+Current trip details:
+{current_details_json}
+
+Recent conversation:
+{conversation_text}
+
+Your next task is to ask about the user's "{target_field.replace('_', ' ')}".
+This information is {field_importance} for planning their trip.
+
+Generate a single, natural-sounding question to ask about this topic.
+Consider what we already know about their trip and make the question flow naturally.
+Avoid sounding like a form or survey. Make it conversational and friendly.
+
+Return only the question you would ask the user, nothing else.
+"""
+        
+        # Call the LLM to generate the next question
+        next_question = self.call_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.7,  # Higher temperature for more varied, natural responses
+            max_tokens=150
+        )
+        
+        # Clean up the response if needed
+        next_question = next_question.strip()
+        
+        # Return the next question and list of all missing required fields
+        return next_question, missing_required
     
     def _format_response(self, details, next_question, missing_fields):
         """Format a response with JSON data included"""
@@ -172,8 +261,8 @@ Format:
         if missing_fields:
             response_text = self._create_friendly_response(details, next_question)
         else:
-            # FIX: Make the generate itinerary prompt more obvious
-            response_text = "Great! I now have all the essential information for your trip. 🎉 Just say 'generate itinerary' whenever you're ready, and I'll create a detailed plan for your vacation! ✨"
+            # Make the generate itinerary prompt more obvious
+            response_text = "Great! I now have all the essential information for your trip. 🎉 Just say 'generate itinerary' whenever you're ready, and I'll create a detailed plan for your vacation!"
         
         # Add JSON data
         response_with_json = f"{response_text}\n\n{{\n    \"trip_details\": {json.dumps(details, indent=8)}\n}}"
@@ -193,7 +282,6 @@ Format:
             "I'm thrilled to help with your travel plans! 🌈"
         ]
         
-        import random
         base_response = random.choice(responses)
         
         # Personalize based on destination if we have it
